@@ -12,9 +12,13 @@ Notes:
       Use --subset-fraction (e.g. 0.2) to train on a random subset for
       faster iteration while still validating the pipeline; drop it (or
       set to 1.0) for a real full-dataset training run.
+    - Only the trainable subset (LoRA adapters) gets checkpointed each
+      epoch, not the full 336M-parameter model -- a few MB instead of
+      over a gigabyte.
 """
 
 import argparse
+import os
 import random
 
 import torch
@@ -46,6 +50,13 @@ def prepare_batch(batch, device):
     return rgb, depth_gt, valid_mask
 
 
+def save_trainable_checkpoint(net, path):
+    """Saves only parameters with requires_grad=True (the LoRA adapters)."""
+    trainable_names = {name for name, p in net.named_parameters() if p.requires_grad}
+    state = {name: tensor for name, tensor in net.state_dict().items() if name in trainable_names}
+    torch.save(state, path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=1)
@@ -54,6 +65,8 @@ def main():
     ap.add_argument("--lora-rank", type=int, default=16)
     ap.add_argument("--subset-fraction", type=float, default=1.0,
                      help="fraction of training frames to use (0 < f <= 1), for faster iteration")
+    ap.add_argument("--checkpoint-dir", type=str, default="checkpoints",
+                     help="directory to save LoRA checkpoints after each epoch")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -66,6 +79,8 @@ def main():
     net = net.to(device)
     net.train()
     print(f"LoRA injected into {len(adapted)} layers")
+
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     print("Building frame list...")
     frames = build_frame_list(H5_ROOT, JSON_ROOT)
@@ -105,6 +120,10 @@ def main():
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         print(f"epoch {epoch} | avg loss: {epoch_loss / n_batches:.4f}")
+
+        ckpt_path = os.path.join(args.checkpoint_dir, f"epoch_{epoch}.pt")
+        save_trainable_checkpoint(net, ckpt_path)
+        print(f"saved checkpoint: {ckpt_path}")
 
     print("Done.")
 
