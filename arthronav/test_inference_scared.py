@@ -11,10 +11,10 @@ Usage:
     python arthronav/test_inference_scared.py -n 5 -v
     python arthronav/test_inference_scared.py --num-samples 20
 """
-
 import argparse
 
 import torch
+torch.backends.cudnn.enabled = False
 import torch.nn.functional as F
 from tqdm import tqdm
 
@@ -28,6 +28,8 @@ JSON_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/frame_trajectory_data"
 # nearest multiples of 14 (DINOv2 patch size) below the native 1024x1280
 TARGET_SIZE = (1022, 1274)
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -35,9 +37,12 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true", help="print per-frame details")
     args = ap.parse_args()
 
+    print(f"Using device: {DEVICE}")
+
     print("Loading model...")
     model = DepthAnything3.from_pretrained("depth-anything/DA3METRIC-LARGE")
     model.eval()
+    model = model.to(DEVICE)
 
     print("Building frame list...")
     frames = build_frame_list(H5_ROOT, JSON_ROOT)
@@ -52,6 +57,7 @@ def main():
         rgb = sample["rgb"].unsqueeze(0)
         rgb = F.interpolate(rgb, size=TARGET_SIZE, mode="bilinear", align_corners=False)
         rgb = rgb.unsqueeze(1)
+        rgb = rgb.to(DEVICE)
 
         with torch.inference_mode():
             output = model(rgb, export_feat_layers=[])
@@ -67,4 +73,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 
