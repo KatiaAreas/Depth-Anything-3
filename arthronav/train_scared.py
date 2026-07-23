@@ -15,11 +15,19 @@ Notes:
     - Only the trainable subset (LoRA adapters) gets checkpointed each
       epoch, not the full 336M-parameter model -- a few MB instead of
       over a gigabyte.
+    - Each run gets its own timestamped checkpoint folder by default
+      (checkpoints/run_<timestamp>), so different runs never overwrite
+      each other's checkpoints. Pass --checkpoint-dir to override.
+    - Every step's loss is logged to loss_log.csv inside that folder,
+      so loss curves can be plotted later without depending on terminal
+      scrollback.
 """
 
 import argparse
+import csv
 import os
 import random
+from datetime import datetime
 
 import torch
 torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
@@ -65,8 +73,8 @@ def main():
     ap.add_argument("--lora-rank", type=int, default=16)
     ap.add_argument("--subset-fraction", type=float, default=1.0,
                      help="fraction of training frames to use (0 < f <= 1), for faster iteration")
-    ap.add_argument("--checkpoint-dir", type=str, default="checkpoints",
-                     help="directory to save LoRA checkpoints after each epoch")
+    ap.add_argument("--checkpoint-dir", type=str, default=None,
+                     help="directory to save checkpoints; defaults to checkpoints/run_<timestamp>")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -80,7 +88,15 @@ def main():
     net.train()
     print(f"LoRA injected into {len(adapted)} layers")
 
+    if args.checkpoint_dir is None:
+        run_name = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        args.checkpoint_dir = os.path.join("checkpoints", run_name)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
+    print(f"Checkpoint directory: {args.checkpoint_dir}")
+
+    log_path = os.path.join(args.checkpoint_dir, "loss_log.csv")
+    with open(log_path, "w", newline="") as f:
+        csv.writer(f).writerow(["epoch", "step", "loss"])
 
     print("Building frame list...")
     frames = build_frame_list(H5_ROOT, JSON_ROOT)
@@ -118,6 +134,9 @@ def main():
             epoch_loss += loss.item()
             n_batches += 1
             pbar.set_postfix(loss=f"{loss.item():.4f}")
+
+            with open(log_path, "a", newline="") as f:
+                csv.writer(f).writerow([epoch, n_batches, loss.item()])
 
         print(f"epoch {epoch} | avg loss: {epoch_loss / n_batches:.4f}")
 
