@@ -2,25 +2,23 @@
 Fine-tune DA3METRIC-LARGE on SCARED with LoRA adapters.
 
 Usage:
-    python -m arthronav.train_scared --epochs 5 --batch-size 2
-    python -m arthronav.train_scared --epochs 1 --batch-size 1 --subset-fraction 0.2
+    python -m arthronav.train_scared --epochs 5 --batch-size 1 --subset-fraction 1.0
 
 Notes:
     - batch-size 1 is currently the max this GPU (24GB) can hold at full
       1022x1274 resolution with backprop. Batch size 2 runs out of memory.
-    - Full training set is 15,846 frames -> ~5.5h/epoch at batch-size 1.
+    - Full training set is 15,846 frames -> ~5-5.5h/epoch at batch-size 1.
       Use --subset-fraction (e.g. 0.2) to train on a random subset for
       faster iteration while still validating the pipeline; drop it (or
       set to 1.0) for a real full-dataset training run.
     - Only the trainable subset (LoRA adapters) gets checkpointed each
-      epoch, not the full 336M-parameter model -- a few MB instead of
+      epoch, not the full 336M-parameter model, a few MB instead of
       over a gigabyte.
-    - Each run gets its own timestamped checkpoint folder by default
-      (checkpoints/run_<timestamp>), so different runs never overwrite
-      each other's checkpoints. Pass --checkpoint-dir to override.
-    - Every step's loss is logged to loss_log.csv inside that folder,
-      so loss curves can be plotted later without depending on terminal
-      scrollback.
+    - Cosine LR schedule: decays smoothly from --lr down to --min-lr over
+      the whole run (all epochs, stepped every batch), added after the
+      medium run showed a dip at epoch 2 with a flat learning rate.
+    - loss_log.csv now has an lr column alongside loss, so both can be
+      plotted together afterward.
 """
 
 import argparse
@@ -30,13 +28,14 @@ import random
 from datetime import datetime
 
 import torch
-#torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
+# torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
 
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from depth_anything_3.api import DepthAnything3
+
 from arthronav.lora import inject_lora
 from arthronav.losses import masked_l1_loss
 from arthronav.scared_io import build_frame_list, split_frames
@@ -69,20 +68,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)
-    ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--lr", type=float, default=1e-4, help="starting learning rate")
+    ap.add_argument("--min-lr", type=float, default=1e-6, help="floor the cosine schedule decays toward")
     ap.add_argument("--lora-rank", type=int, default=16)
     ap.add_argument("--subset-fraction", type=float, default=1.0,
                      help="fraction of training frames to use (0 < f <= 1), for faster iteration")
     ap.add_argument("--checkpoint-dir", type=str, default=None,
                      help="directory to save checkpoints; defaults to checkpoints/run_<timestamp>")
+    ap.add_argument("--num-workers", type=int, default=4)
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     print("Loading model...")
-    model = DepthAnything3.from_pretrained("depth-anything/DA3METRIC-LARGE")
-    net = model.model
+    wrapper = DepthAnything3.from_pretrained("depth-anything/DA3METRIC-LARGE")
+    net = wrapper.model
     adapted = inject_lora(net, rank=args.lora_rank)
     net = net.to(device)
     net.train()
@@ -96,7 +97,7 @@ def main():
 
     log_path = os.path.join(args.checkpoint_dir, "loss_log.csv")
     with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow(["epoch", "step", "loss"])
+        csv.writer(f).writerow(["epoch", "step", "lr", "loss"])
 
     print("Building frame list...")
     frames = build_frame_list(H5_ROOT, JSON_ROOT)
@@ -109,10 +110,17 @@ def main():
         print(f"Using subset: {n_keep} / {len(frames)} frames ({args.subset_fraction:.0%})")
 
     train_ds = SCAREDDataset(train_frames)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                               num_workers=args.num_workers, drop_last=True)
 
     trainable_params = [p for p in net.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=args.lr)
+
+    total_steps = args.epochs * len(train_loader)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=total_steps, eta_min=args.min_lr
+    )
+    print(f"Cosine LR schedule: {args.lr} -> {args.min_lr} over {total_steps} steps")
 
     for epoch in range(args.epochs):
         epoch_loss = 0.0
@@ -130,15 +138,17 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
+            current_lr = scheduler.get_last_lr()[0]
             epoch_loss += loss.item()
             n_batches += 1
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
+            pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{current_lr:.2e}")
 
             with open(log_path, "a", newline="") as f:
-                csv.writer(f).writerow([epoch, n_batches, loss.item()])
+                csv.writer(f).writerow([epoch, n_batches, current_lr, loss.item()])
 
-        print(f"epoch {epoch} | avg loss: {epoch_loss / n_batches:.4f}")
+        print(f"epoch {epoch} | avg loss: {epoch_loss / n_batches:.4f} | lr: {current_lr:.2e}")
 
         ckpt_path = os.path.join(args.checkpoint_dir, f"epoch_{epoch}.pt")
         save_trainable_checkpoint(net, ckpt_path)
