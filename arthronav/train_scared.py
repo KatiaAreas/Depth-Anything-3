@@ -30,7 +30,7 @@ import random
 from datetime import datetime
 
 import torch
-torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
+#torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
 
 import torch.nn.functional as F
 from torch.utils.data import DataLoader

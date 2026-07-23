@@ -9,7 +9,7 @@ Usage:
 import argparse
 
 import torch
-torch.backends.cudnn.enabled = False
+#torch.backends.cudnn.enabled = False
 
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
