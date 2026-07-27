@@ -19,6 +19,9 @@ Notes:
       medium run showed a dip at epoch 2 with a flat learning rate.
     - loss_log.csv now has an lr column alongside loss, so both can be
       plotted together afterward.
+    - train_ds now uses bad_files_path="bad_h5_files.txt" to skip the one
+      known-corrupted frame found by scan_h5_integrity.py, plus a runtime
+      retry safety net in SCAREDDataset itself.
 """
 
 import argparse
@@ -76,6 +79,8 @@ def main():
     ap.add_argument("--checkpoint-dir", type=str, default=None,
                      help="directory to save checkpoints; defaults to checkpoints/run_<timestamp>")
     ap.add_argument("--num-workers", type=int, default=4)
+    ap.add_argument("--bad-files", type=str, default="bad_h5_files.txt",
+                     help="path to the known-bad-files list from scan_h5_integrity.py")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -109,7 +114,7 @@ def main():
         train_frames = rng.sample(train_frames, n_keep)
         print(f"Using subset: {n_keep} / {len(frames)} frames ({args.subset_fraction:.0%})")
 
-    train_ds = SCAREDDataset(train_frames)
+    train_ds = SCAREDDataset(train_frames, bad_files_path=args.bad_files)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                num_workers=args.num_workers, drop_last=True)
 
