@@ -22,8 +22,8 @@ from depth_anything_3.api import DepthAnything3
 from arthronav.scared_io import build_frame_list, split_frames
 from arthronav.scared_dataset import SCAREDDataset
 
-H5_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
-JSON_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/frame_trajectory_data"
+H5_ROOT = "/data/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
+JSON_ROOT = "/data/scared_dataset_full_copy/frame_trajectory_data"
 
 # nearest multiples of 14 (DINOv2 patch size) below the native 1024x1280
 TARGET_SIZE = (1022, 1274)

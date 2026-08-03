@@ -10,10 +10,10 @@ Usage:
 from arthronav.scared_io import build_frame_list, load_frame_h5
 from arthronav.scared_dataset import SCAREDDataset
 
-H5_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
-JSON_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/frame_trajectory_data"
+H5_ROOT = "/data/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
+JSON_ROOT = "/data/scared_dataset_full_copy/frame_trajectory_data"
 
-BAD_PATH = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything/dataset_2/keyframe_4/001653.h5"
+BAD_PATH = "/data/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything/dataset_2/keyframe_4/001653.h5"
 
 
 def main():

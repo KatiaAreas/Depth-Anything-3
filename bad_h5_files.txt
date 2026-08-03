@@ -1,1 +1,1 @@
-/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything/dataset_2/keyframe_4/001653.h5	Unable to synchronously open file (truncated file: eof = 4618748, sblock->base_addr = 0, stored_eof = 20973568)
+/data/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything/dataset_2/keyframe_4/001653.h5	Unable to synchronously open file (truncated file: eof = 4618748, sblock->base_addr = 0, stored_eof = 20973568)

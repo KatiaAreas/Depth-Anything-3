@@ -44,8 +44,8 @@ from arthronav.losses import masked_l1_loss
 from arthronav.scared_io import build_frame_list, split_frames
 from arthronav.scared_dataset import SCAREDDataset
 
-H5_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
-JSON_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/frame_trajectory_data"
+H5_ROOT = "/data/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
+JSON_ROOT = "/data/scared_dataset_full_copy/frame_trajectory_data"
 TARGET_SIZE = (1022, 1274)  # nearest multiples of 14 below the native 1024x1280
 
 
