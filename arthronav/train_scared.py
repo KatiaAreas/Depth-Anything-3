@@ -39,7 +39,7 @@ from tqdm import tqdm
 
 from depth_anything_3.api import DepthAnything3
 
-from arthronav.lora import inject_lora
+from arthronav.lora import inject_lora, make_vector_lora_ranks
 from arthronav.losses import masked_l1_loss
 from arthronav.scared_io import build_frame_list, split_frames
 from arthronav.scared_dataset import SCAREDDataset
@@ -74,6 +74,10 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4, help="starting learning rate")
     ap.add_argument("--min-lr", type=float, default=1e-6, help="floor the cosine schedule decays toward")
     ap.add_argument("--lora-rank", type=int, default=16)
+    ap.add_argument("--vector-lora", action="store_true",
+                     help="use Vector-LoRA (decreasing rank per block) instead of uniform rank")
+    ap.add_argument("--vector-lora-rank-max", type=int, default=24)
+    ap.add_argument("--vector-lora-rank-min", type=int, default=8)
     ap.add_argument("--subset-fraction", type=float, default=1.0,
                      help="fraction of training frames to use (0 < f <= 1), for faster iteration")
     ap.add_argument("--checkpoint-dir", type=str, default=None,
@@ -89,7 +93,13 @@ def main():
     print("Loading model...")
     wrapper = DepthAnything3.from_pretrained("depth-anything/DA3METRIC-LARGE")
     net = wrapper.model
-    adapted = inject_lora(net, rank=args.lora_rank)
+    if args.vector_lora:
+        num_blocks = len(net.backbone.pretrained.blocks)
+        ranks = make_vector_lora_ranks(num_blocks, args.vector_lora_rank_max, args.vector_lora_rank_min)
+        adapted = inject_lora(net, ranks=ranks)
+        print(f"Vector-LoRA rank schedule: {ranks}")
+    else:
+        adapted = inject_lora(net, rank=args.lora_rank)
     net = net.to(device)
     net.train()
     print(f"LoRA injected into {len(adapted)} layers")

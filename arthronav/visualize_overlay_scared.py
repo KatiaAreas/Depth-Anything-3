@@ -4,6 +4,10 @@ predicted depth map, on a genuinely unseen validation frame, so
 misalignment is visible in one image rather than by eye-comparing
 separate panels.
 
+Depth is converted to real meters (raw h5 value x 0.256) before any
+plotting or error computation, so every number in the figure itself is
+already correct, not just noted as corrected afterward.
+
 Usage:
     python -m arthronav.visualize_overlay_scared --frame-index 0 \
         --checkpoint checkpoints/scared_training_checkpoints/checkpoints_long_run_full_v2/epoch_2.pt
@@ -27,6 +31,7 @@ from arthronav.scared_dataset import SCAREDDataset
 H5_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/depth_anything_preprocessed_data/train_depth_anything"
 JSON_ROOT = "/mnt/areas_nas/SLAM/scared_dataset_full_copy/frame_trajectory_data"
 TARGET_SIZE = (1022, 1274)
+UNIT_CORRECTION = 0.256  # verified: raw h5 depth x 0.256 = real meters
 
 
 def main():
@@ -36,6 +41,8 @@ def main():
     ap.add_argument("--checkpoint", type=str, default=None,
                      help="path to a LoRA checkpoint; omit to use the base pretrained model")
     ap.add_argument("--lora-rank", type=int, default=16)
+    ap.add_argument("--num-contour-levels", type=int, default=6,
+                     help="fewer levels = cleaner lines, easier to read")
     ap.add_argument("--out", type=str, default="overlay_sample.png")
     args = ap.parse_args()
 
@@ -67,14 +74,16 @@ def main():
     rgb_in = F.interpolate(rgb_orig, size=TARGET_SIZE, mode="bilinear", align_corners=False)
     rgb_in = rgb_in.unsqueeze(1).to(device)
 
+    # ground truth: convert to real meters immediately, before anything else
     depth_gt = sample["depth"].unsqueeze(0).unsqueeze(0)
     depth_gt = F.interpolate(depth_gt, size=TARGET_SIZE, mode="nearest").squeeze(0).squeeze(0)
-    depth_gt = depth_gt.to(device)
-    valid_mask = depth_gt > 1e-4
+    depth_gt = (depth_gt * UNIT_CORRECTION).to(device)
+    valid_mask = depth_gt > (1e-4 * UNIT_CORRECTION)
 
     with torch.no_grad():
         output = net(rgb_in, export_feat_layers=[])
-    depth_pred = output.depth.squeeze(0).squeeze(0)
+    # prediction: same conversion, same point in the pipeline
+    depth_pred = output.depth.squeeze(0).squeeze(0) * UNIT_CORRECTION
 
     error_map = torch.zeros_like(depth_gt)
     error_map[valid_mask] = (depth_pred[valid_mask] - depth_gt[valid_mask]).abs()
@@ -88,15 +97,13 @@ def main():
     pred_masked = np.where(mask_np, pred_np, np.nan)
 
     vmin, vmax = np.nanmin(gt_masked), np.nanmax(gt_masked)
-    levels = np.linspace(vmin, vmax, 8)  # 8 iso-depth contour lines
+    levels = np.linspace(vmin, vmax, args.num_contour_levels)
 
     fig, ax = plt.subplots(figsize=(9, 7))
 
-    # base layer: predicted depth as a filled colormap
     im = ax.imshow(pred_masked, cmap="viridis", vmin=vmin, vmax=vmax)
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Predicted depth (m)")
 
-    # superposed layer: ground-truth depth as contour lines on top
     contour = ax.contour(gt_masked, levels=levels, colors="red", linewidths=1.0)
     ax.clabel(contour, inline=True, fontsize=7, fmt="%.3f")
 
@@ -111,7 +118,7 @@ def main():
     plt.tight_layout()
     plt.savefig(args.out, dpi=150, bbox_inches="tight")
     print(f"Saved overlay figure to {args.out}")
-    print(f"Error (valid pixels only): min={err_min:.4f} m, max={err_max:.4f} m, mean={err_mean:.4f} m")
+    print(f"Error, real meters (valid pixels only): min={err_min:.4f} m, max={err_max:.4f} m, mean={err_mean:.4f} m")
 
 
 if __name__ == "__main__":

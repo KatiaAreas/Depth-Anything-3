@@ -18,7 +18,7 @@ def load_frame_json(json_path):
 def load_frame_h5(h5_path):
     with h5py.File(h5_path, "r") as f:
         rgb = f["rgb"][:]      # (H, W, 3) float32, [0, 1]
-        depth = f["depth"][:]  # (H, W) float32, meters
+        depth = f["depth"][:]  # (H, W) float32, NOT meters -- raw_mm / 256 (see README note), multiply by 0.256 for real meters
 
     return rgb, depth
     
