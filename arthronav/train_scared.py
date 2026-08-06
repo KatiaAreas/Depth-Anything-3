@@ -5,9 +5,9 @@ Usage:
     python -m arthronav.train_scared --epochs 5 --batch-size 1 --subset-fraction 1.0
 
 Notes:
-    - batch-size 1 is currently the max this GPU (24GB) can hold at full
-      1022x1274 resolution with backprop. Batch size 2 runs out of memory.
-    - Full training set is 15,846 frames -> ~5-5.5h/epoch at batch-size 1.
+    - batch-size 1 is currently the max this GPU can hold at full
+      1022x1274 resolution with backprop.
+    - Full training set is 15,846 frames.
       Use --subset-fraction (e.g. 0.2) to train on a random subset for
       faster iteration while still validating the pipeline; drop it (or
       set to 1.0) for a real full-dataset training run.
@@ -15,13 +15,12 @@ Notes:
       epoch, not the full 336M-parameter model, a few MB instead of
       over a gigabyte.
     - Cosine LR schedule: decays smoothly from --lr down to --min-lr over
-      the whole run (all epochs, stepped every batch), added after the
-      medium run showed a dip at epoch 2 with a flat learning rate.
-    - loss_log.csv now has an lr column alongside loss, so both can be
+      the whole run (all epochs, stepped every batch).
+    - loss_log.csv has an lr column alongside loss, so both can be
       plotted together afterward.
-    - train_ds now uses bad_files_path="bad_h5_files.txt" to skip the one
-      known-corrupted frame found by scan_h5_integrity.py, plus a runtime
-      retry safety net in SCAREDDataset itself.
+    - train_ds uses bad_files_path="bad_h5_files.txt" to skip any
+      known-corrupted frame found by scan_h5_integrity.py, plus a
+      runtime retry safety net in SCAREDDataset itself.
 """
 
 import argparse
@@ -31,7 +30,6 @@ import random
 from datetime import datetime
 
 import torch
-# torch.backends.cudnn.enabled = False  # workaround for the cuDNN version conflict on this machine
 
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -39,8 +37,8 @@ from tqdm import tqdm
 
 from depth_anything_3.api import DepthAnything3
 
-from arthronav.lora import inject_lora
-from arthronav.losses import masked_l1_loss
+from arthronav.lora import inject_lora, inject_vector_lora
+from arthronav.losses import masked_l1_loss, gradient_loss
 from arthronav.scared_io import build_frame_list, split_frames
 from arthronav.scared_dataset import SCAREDDataset
 
@@ -74,6 +72,8 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4, help="starting learning rate")
     ap.add_argument("--min-lr", type=float, default=1e-6, help="floor the cosine schedule decays toward")
     ap.add_argument("--lora-rank", type=int, default=16)
+    ap.add_argument("--vector-lora", action="store_true",
+                     help="use Vector-LoRA (decreasing rank per block) instead of uniform rank")
     ap.add_argument("--subset-fraction", type=float, default=1.0,
                      help="fraction of training frames to use (0 < f <= 1), for faster iteration")
     ap.add_argument("--checkpoint-dir", type=str, default=None,
@@ -81,6 +81,8 @@ def main():
     ap.add_argument("--num-workers", type=int, default=4)
     ap.add_argument("--bad-files", type=str, default="bad_h5_files.txt",
                      help="path to the known-bad-files list from scan_h5_integrity.py")
+    ap.add_argument("--grad-loss-weight", type=float, default=0.0,
+                     help="weight for the gradient-matching loss term; 0.0 = pure L1 (baseline)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -89,7 +91,11 @@ def main():
     print("Loading model...")
     wrapper = DepthAnything3.from_pretrained("depth-anything/DA3METRIC-LARGE")
     net = wrapper.model
-    adapted = inject_lora(net, rank=args.lora_rank)
+    if args.vector_lora:
+        adapted = inject_vector_lora(net)  # DARES's real schedule, stretched to this backbone's block count
+        print(f"Vector-LoRA (DARES-style, q/v only, no scaling): {len(adapted)} layers adapted")
+    else:
+        adapted = inject_lora(net, rank=args.lora_rank)
     net = net.to(device)
     net.train()
     print(f"LoRA injected into {len(adapted)} layers")
@@ -138,7 +144,12 @@ def main():
             output = net(rgb, export_feat_layers=[])
             pred = output.depth.squeeze(1)
 
-            loss = masked_l1_loss(pred, depth_gt, valid_mask)
+            loss_l1 = masked_l1_loss(pred, depth_gt, valid_mask)
+            if args.grad_loss_weight > 0:
+                loss_grad = gradient_loss(pred, depth_gt, valid_mask)
+                loss = loss_l1 + args.grad_loss_weight * loss_grad
+            else:
+                loss = loss_l1
 
             optimizer.zero_grad()
             loss.backward()
